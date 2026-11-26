@@ -3,12 +3,13 @@ import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 import { resolveAppMode } from "./src/config.ts";
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
-  // Throws for a production build with VITE_APP_MODE=demo, so the build fails
-  // before any bundle exists. `__DEMO_ENABLED__` then lets the bundler drop the
+  // Every `vite build` is a production build whatever its --mode (staging, preview,
+  // anything custom), so keying on the command rather than the mode name leaves no
+  // build that can bundle demo code. This throws before any bundle exists. `__DEMO_ENABLED__` then lets the bundler drop the
   // demo backend entirely from production output.
-  const appMode = resolveAppMode({ PROD: mode === "production", VITE_APP_MODE: env.VITE_APP_MODE });
+  const appMode = resolveAppMode({ PROD: command === "build", VITE_APP_MODE: env.VITE_APP_MODE });
 
   return {
     plugins: [react()],

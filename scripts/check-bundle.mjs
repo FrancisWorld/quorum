@@ -19,8 +19,16 @@ function walk(dir) {
   );
 }
 
+let files;
+try {
+  files = walk(dist);
+} catch {
+  console.error("dist/ not found: run `npm run build` first.");
+  process.exit(1);
+}
+
 const offenders = [];
-for (const file of walk(dist).filter((f) => /\.(js|html|css)$/.test(f))) {
+for (const file of files.filter((f) => /\.(js|html|css)$/.test(f))) {
   const text = readFileSync(file, "utf8");
   for (const marker of FORBIDDEN) if (text.includes(marker)) offenders.push(`${file}: ${marker}`);
 }

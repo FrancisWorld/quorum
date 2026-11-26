@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   DemoModeInProductionError,
@@ -37,3 +38,18 @@ describe("liveConfigIssues", () => {
     expect(liveConfigIssues({ VITE_CONVEX_URL: "https://x.convex.cloud", VITE_CLERK_PUBLISHABLE_KEY: "local-test-key" })).toEqual([]);
   });
 });
+
+describe("vite build guard", () => {
+  // Spawns the real CLI: the guard lives in vite.config.ts, so only a real build proves it.
+  const build = (mode: string) =>
+    spawnSync(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--mode", mode, "--outDir", "node_modules/.cache/guard-out"], {
+      env: { ...process.env, VITE_APP_MODE: "demo" },
+      encoding: "utf8",
+    });
+
+  it.each(["production", "staging", "demo-preview", "development"])("fails `vite build --mode %s` with VITE_APP_MODE=demo", (mode) => {
+    const result = build(mode);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("DemoModeInProductionError");
+  });
+}, 60_000);

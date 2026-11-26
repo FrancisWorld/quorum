@@ -30,12 +30,14 @@ jobs:
         run: npm run build
       - name: Production bundle contains no demo code
         run: npm run check:bundle
-      - name: Demo mode must fail a production build
+      - name: Demo mode must fail every build, whatever its mode
         run: |
-          if VITE_APP_MODE=demo npm run build; then
-            echo "demo mode build unexpectedly succeeded" >&2
-            exit 1
-          fi
+          for mode in production staging demo-preview; do
+            if VITE_APP_MODE=demo npx vite build --mode "$mode" --outDir "$RUNNER_TEMP/guard-out"; then
+              echo "demo build with --mode $mode unexpectedly succeeded" >&2
+              exit 1
+            fi
+          done
 
   e2e:
     runs-on: ubuntu-latest
