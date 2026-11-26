@@ -71,12 +71,12 @@ describe("joining and hosting", () => {
   it("reports an unknown code and joins with the seeded one", async () => {
     const user = renderApp();
     await signIn(user, /Dev Rao/);
-    await user.type(await screen.findByLabelText("Room code"), "ZZZ-ZZZ");
+    await user.type(await screen.findByLabelText("Room code"), "ZZZZ-ZZZZ");
     await user.click(screen.getByRole("button", { name: "Join" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("No room has that code");
 
     await user.clear(screen.getByLabelText("Room code"));
-    await user.type(screen.getByLabelText("Room code"), "event7");
+    await user.type(screen.getByLabelText("Room code"), "keyn-t4m7");
     await user.click(screen.getByRole("button", { name: "Join" }));
     expect(await screen.findByRole("heading", { level: 1, name: /Platform Summit/ })).toBeInTheDocument();
   });

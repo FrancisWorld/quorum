@@ -28,7 +28,7 @@ describe("authentication", () => {
 describe("creating rooms", () => {
   it("creates a room with a valid code and makes the creator host", async () => {
     const { t, roomId, code: joinCode } = await newRoom();
-    expect(joinCode).toMatch(/^[A-HJKMNP-Z2-9]{6}$/);
+    expect(joinCode).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
     const room = await as(t, ADA).query(api.rooms.get, { roomId });
     expect(room).toMatchObject({ title: "Town hall", role: "host", status: "open", moderated: false, pendingCount: 0 });
   });
@@ -42,24 +42,29 @@ describe("creating rooms", () => {
 
   it("allocates distinct codes even when the random source collides", async () => {
     const t = createBackend();
-    const random = vi.spyOn(Math, "random");
-    // First room draws "AAAAAA". The next room's first attempt draws it again (collision), the retry draws fresh.
-    random.mockReturnValue(0);
+    let calls = 0;
+    // The first room draws index 0 everywhere ("AAAAAAAA"). The next room's first attempt
+    // draws it again (collision), then the retry draws fresh values.
+    const spy = vi.spyOn(crypto, "getRandomValues").mockImplementation(((array: Uint32Array) => {
+      array[0] = calls++ < 16 ? 0 : 5;
+      return array;
+    }) as typeof crypto.getRandomValues);
     const first = await as(t, ADA).mutation(api.rooms.create, { title: "First room", moderated: false });
-    random.mockReturnValue(0.5);
-    for (let i = 0; i < 6; i++) random.mockReturnValueOnce(0);
     const second = await as(t, BEN).mutation(api.rooms.create, { title: "Second room", moderated: false });
-    random.mockRestore();
-    expect(first.code).toBe("AAAAAA");
-    expect(second.code).not.toBe(first.code);
+    spy.mockRestore();
+    expect(first.code).toBe("AAAAAAAA");
+    expect(second.code).toBe("FFFFFFFF");
   });
 
   it("gives up with CONFLICT when no free code can be found", async () => {
     const t = createBackend();
-    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const spy = vi.spyOn(crypto, "getRandomValues").mockImplementation(((array: Uint32Array) => {
+      array[0] = 0;
+      return array;
+    }) as typeof crypto.getRandomValues);
     await as(t, ADA).mutation(api.rooms.create, { title: "First room", moderated: false });
     await expect(as(t, BEN).mutation(api.rooms.create, { title: "Second room", moderated: false })).rejects.toMatchObject(code("CONFLICT"));
-    random.mockRestore();
+    spy.mockRestore();
   });
 
   it("rate limits room creation per user", async () => {
@@ -75,7 +80,7 @@ describe("joining", () => {
     const { t, roomId, code: joinCode } = await newRoom();
     const lower = joinCode.toLowerCase();
     expect(await as(t, CLEO).mutation(api.rooms.join, { code: lower })).toEqual({ status: "joined", roomId });
-    expect(await as(t, CLEO).mutation(api.rooms.join, { code: `${joinCode.slice(0, 3)}-${joinCode.slice(3)}` })).toEqual({ status: "joined", roomId });
+    expect(await as(t, CLEO).mutation(api.rooms.join, { code: `${joinCode.slice(0, 4)}-${joinCode.slice(4)}` })).toEqual({ status: "joined", roomId });
     expect(await as(t, ADA).mutation(api.rooms.join, { code: joinCode })).toEqual({ status: "joined", roomId });
 
     expect((await as(t, CLEO).query(api.rooms.get, { roomId })).role).toBe("participant");
@@ -94,20 +99,43 @@ describe("joining", () => {
 
   it("returns not_found for unknown or malformed codes", async () => {
     const { t } = await newRoom();
-    expect(await as(t, CLEO).mutation(api.rooms.join, { code: "ZZZZZZ" })).toEqual({ status: "not_found" });
+    expect(await as(t, CLEO).mutation(api.rooms.join, { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
     expect(await as(t, CLEO).mutation(api.rooms.join, { code: "nope" })).toEqual({ status: "not_found" });
   });
 
   it("counts failed guesses against the rate limit instead of rolling them back", async () => {
     const { t, code: joinCode } = await newRoom();
     for (let i = 0; i < 5; i++) {
-      expect(await as(t, DEV).mutation(api.rooms.join, { code: "ZZZZZZ" })).toEqual({ status: "not_found" });
+      expect(await as(t, DEV).mutation(api.rooms.join, { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
     }
     const blocked = await as(t, DEV).mutation(api.rooms.join, { code: joinCode });
     expect(blocked).toMatchObject({ status: "rate_limited" });
     // The bucket refills with time (1 token per 12 s).
     vi.setSystemTime(new Date("2026-03-01T10:00:13Z"));
     expect(await as(t, DEV).mutation(api.rooms.join, { code: joinCode })).toMatchObject({ status: "joined" });
+  });
+
+  it("a deployment-wide failure bucket stops guessing that rotates identities", async () => {
+    const { t, code: joinCode } = await newRoom();
+    // 20 different accounts, 3 misses each: no per-user limit (5) is ever hit.
+    for (let i = 0; i < 20; i++) {
+      for (let j = 0; j < 3; j++) {
+        expect(await as(t, { userId: `user_g${i}`, name: "G" }).mutation(api.rooms.join, { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
+      }
+    }
+    // A fresh account is now refused even with the right code, so a hit cannot be told from a miss.
+    const fresh = { userId: "user_fresh", name: "Fresh" };
+    expect(await as(t, fresh).mutation(api.rooms.join, { code: joinCode })).toMatchObject({ status: "rate_limited" });
+    expect(await as(t, fresh).mutation(api.rooms.join, { code: "ZZZZZZZZ" })).toMatchObject({ status: "rate_limited" });
+    vi.setSystemTime(new Date("2026-03-01T10:00:03Z"));
+    expect(await as(t, fresh).mutation(api.rooms.join, { code: joinCode })).toMatchObject({ status: "joined" });
+  });
+
+  it("successful joins never spend the failure bucket", async () => {
+    const { t, code: joinCode } = await newRoom();
+    for (let i = 0; i < 100; i++) {
+      expect(await as(t, { userId: `user_ok${i}`, name: "Ok" }).mutation(api.rooms.join, { code: joinCode })).toMatchObject({ status: "joined" });
+    }
   });
 
   it("lists my rooms, newest first", async () => {

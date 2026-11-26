@@ -37,6 +37,11 @@ export const RATE_LIMITS = {
   vote: { capacity: 20, refillPerSecond: 2 },
   pollVote: { capacity: 10, refillPerSecond: 1 },
   join: { capacity: 5, refillPerSecond: 1 / 12 },
+  /**
+   * One bucket for the whole deployment, spent only by join attempts that miss.
+   * Per-user limits are reset by making another account; this one is not.
+   */
+  joinFailure: { capacity: 60, refillPerSecond: 1 },
   createRoom: { capacity: 3, refillPerSecond: 1 / 60 },
   heartbeat: { capacity: 6, refillPerSecond: 1 / 5 },
 } as const satisfies Record<string, BucketConfig>;

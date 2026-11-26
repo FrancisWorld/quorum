@@ -19,6 +19,24 @@ export async function tryConsume(
   return { allowed: result.allowed, retryAfterMs: result.retryAfterMs };
 }
 
+/** Whether a token is available, without spending it. */
+export async function hasCapacity(
+  ctx: Pick<MutationCtx, "db">,
+  kind: RateLimitKind,
+  subject: string,
+): Promise<{ allowed: boolean; retryAfterMs: number }> {
+  const row = await ctx.db
+    .query("rateLimits")
+    .withIndex("by_key", (q) => q.eq("key", `${kind}:${subject}`))
+    .unique();
+  const { allowed, retryAfterMs } = consumeToken(
+    row ? { tokens: row.tokens, updatedAt: row.updatedAt } : null,
+    Date.now(),
+    RATE_LIMITS[kind],
+  );
+  return { allowed, retryAfterMs };
+}
+
 /**
  * Throwing variant: the mutation aborts, so the token is refunded together with
  * everything else the mutation did. Use `tryConsume` when failed attempts must count.

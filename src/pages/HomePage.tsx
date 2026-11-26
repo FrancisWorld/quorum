@@ -35,11 +35,11 @@ function JoinForm() {
         id="join-code"
         value={code}
         onChange={(event) => setCode(event.target.value)}
-        placeholder="ABC-DEF"
+        placeholder="ABCD-EFGH"
         autoComplete="off"
         autoCapitalize="characters"
         spellCheck={false}
-        maxLength={12}
+        maxLength={14}
         required
         className="code-input"
       />

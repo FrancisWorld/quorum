@@ -79,7 +79,7 @@ export function App() {
             <section className="hero">
               <h1>Questions and polls that keep up with the room.</h1>
               <p className="lede">
-                Create a room, share the six-character code, and let your audience ask, upvote and vote while you
+                Create a room, share the eight-character code, and let your audience ask, upvote and vote while you
                 moderate and present live.
               </p>
             </section>

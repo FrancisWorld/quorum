@@ -1,5 +1,5 @@
 import { appError } from "../../convex/lib/errors";
-import { generateJoinCode, normalizeJoinCode } from "../../convex/lib/joinCode";
+import { generateJoinCode, normalizeJoinCode, type RandomIndex } from "../../convex/lib/joinCode";
 import {
   canSpotlight,
   initialStatus,
@@ -53,7 +53,7 @@ export const DEMO_USERS: readonly DemoUser[] = [
   { id: "demo_dev", name: "Dev Rao", blurb: "Participant" },
 ];
 
-export const DEMO_ROOM_CODE = "EVENT7";
+export const DEMO_ROOM_CODE = "KEYNT4M7";
 
 interface RoomRow {
   id: string;
@@ -103,7 +103,8 @@ interface State {
 
 export interface DemoOptions {
   now?: () => number;
-  random?: () => number;
+  /** Integer in [0, max); defaults to the same CSPRNG-backed sampler the Convex functions use. */
+  randomIndex?: RandomIndex;
   /** Seed the sample room. Conformance tests start from an empty world. */
   seed?: boolean;
 }
@@ -132,11 +133,11 @@ export class DemoBackend implements Backend {
   private readonly subscriptions = new Set<Subscription>();
   private readonly identityListeners = new Set<() => void>();
   private readonly now: () => number;
-  private readonly random: () => number;
+  private readonly randomIndex: RandomIndex | undefined;
 
   constructor(options: DemoOptions = {}) {
     this.now = options.now ?? Date.now;
-    this.random = options.random ?? Math.random;
+    this.randomIndex = options.randomIndex;
     if (options.seed ?? true) this.seed();
   }
 
@@ -239,6 +240,11 @@ export class DemoBackend implements Backend {
     const result = consumeToken(this.state.buckets[key] ?? null, this.now(), RATE_LIMITS[kind]);
     this.state.buckets[key] = result.state;
     return { allowed: result.allowed, retryAfterMs: result.retryAfterMs };
+  }
+
+  private hasCapacity(kind: RateLimitKind, subject: string): { allowed: boolean; retryAfterMs: number } {
+    const { allowed, retryAfterMs } = consumeToken(this.state.buckets[`${kind}:${subject}`] ?? null, this.now(), RATE_LIMITS[kind]);
+    return { allowed, retryAfterMs };
   }
 
   private enforce(kind: RateLimitKind, subject: string): void {
@@ -353,7 +359,7 @@ export class DemoBackend implements Backend {
       this.enforce("createRoom", caller.userId);
       let code: string | null = null;
       for (let attempt = 0; attempt < 10 && code === null; attempt++) {
-        const candidate = generateJoinCode(this.random);
+        const candidate = generateJoinCode(this.randomIndex);
         if (!this.state.rooms.some((r) => r.code === candidate)) code = candidate;
       }
       if (code === null) throw appError("CONFLICT", "Could not allocate a join code. Try again.");
@@ -375,9 +381,14 @@ export class DemoBackend implements Backend {
       const caller = this.caller();
       const limit = this.consume("join", caller.userId);
       if (!limit.allowed) return { status: "rate_limited", retryAfterMs: limit.retryAfterMs };
+      const global = this.hasCapacity("joinFailure", "global");
+      if (!global.allowed) return { status: "rate_limited", retryAfterMs: global.retryAfterMs };
       const normalized = normalizeJoinCode(code);
       const room = normalized ? this.state.rooms.find((r) => r.code === normalized) : undefined;
-      if (!room) return { status: "not_found" };
+      if (!room) {
+        this.consume("joinFailure", "global");
+        return { status: "not_found" };
+      }
       const existing = this.state.members.find((m) => m.roomId === room.id && m.userId === caller.userId);
       if (!existing) {
         this.state.members.push({ roomId: room.id, userId: caller.userId, name: caller.name, role: "participant" });

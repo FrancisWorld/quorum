@@ -8,7 +8,7 @@ import {
 import { appError } from "./lib/errors";
 import { generateJoinCode, normalizeJoinCode } from "./lib/joinCode";
 import { canSpotlight } from "./lib/moderation";
-import { enforceRateLimit, tryConsume } from "./lib/rateLimitDb";
+import { enforceRateLimit, hasCapacity, tryConsume } from "./lib/rateLimitDb";
 import { validateRoomTitle } from "./lib/validation";
 import type { JoinResult, MemberView, RoomSummary, RoomView } from "./lib/views";
 
@@ -24,7 +24,7 @@ export const create = mutation({
 
     let code: string | null = null;
     for (let attempt = 0; attempt < CODE_ATTEMPTS && code === null; attempt++) {
-      const candidate = generateJoinCode(Math.random);
+      const candidate = generateJoinCode();
       const taken = await ctx.db
         .query("rooms")
         .withIndex("by_code", (q) => q.eq("code", candidate))
@@ -53,9 +53,17 @@ export const create = mutation({
   },
 });
 
+const GLOBAL = "global";
+
 /**
+ * Guessing defences, in order:
+ * 1. a per-user bucket spent by every attempt;
+ * 2. a deployment-wide bucket spent only by misses. While it is empty, joins are
+ *    refused for everyone, valid codes included (otherwise a valid answer would
+ *    still reveal a hit). The price is that a sustained flood of bad guesses can
+ *    pause new joins; existing members are unaffected.
  * Failure is a normal result, not a thrown error: a throw would roll back the
- * rate-limit token, and code guessing is exactly what the limit is for.
+ * tokens, and code guessing is exactly what the limits are for.
  */
 export const join = mutation({
   args: { code: v.string() },
@@ -63,6 +71,8 @@ export const join = mutation({
     const caller = await requireCaller(ctx);
     const limit = await tryConsume(ctx, "join", caller.userId);
     if (!limit.allowed) return { status: "rate_limited", retryAfterMs: limit.retryAfterMs };
+    const global = await hasCapacity(ctx, "joinFailure", GLOBAL);
+    if (!global.allowed) return { status: "rate_limited", retryAfterMs: global.retryAfterMs };
 
     const code = normalizeJoinCode(args.code);
     const room = code
@@ -71,7 +81,10 @@ export const join = mutation({
           .withIndex("by_code", (q) => q.eq("code", code))
           .unique()
       : null;
-    if (!room) return { status: "not_found" };
+    if (!room) {
+      await tryConsume(ctx, "joinFailure", GLOBAL);
+      return { status: "not_found" };
+    }
 
     const existing = await ctx.db
       .query("members")

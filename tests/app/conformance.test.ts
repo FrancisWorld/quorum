@@ -47,13 +47,13 @@ describe.each([
 
   it("creates rooms, joins by forgiving code, and reports roles", async () => {
     const { roomId, code } = await me(ADA).mutate("rooms.create", { title: "  Town   hall ", moderated: true });
-    expect(code).toMatch(/^[A-HJKMNP-Z2-9]{6}$/);
-    expect(await me(CLEO).mutate("rooms.join", { code: `${code.slice(0, 3)}-${code.slice(3)}`.toLowerCase() })).toEqual({ status: "joined", roomId });
+    expect(code).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
+    expect(await me(CLEO).mutate("rooms.join", { code: `${code.slice(0, 4)}-${code.slice(4)}`.toLowerCase() })).toEqual({ status: "joined", roomId });
     expect(await me(CLEO).mutate("rooms.join", { code })).toEqual({ status: "joined", roomId });
     expect(await me(ADA).query("rooms.get", { roomId })).toMatchObject({ title: "Town hall", role: "host", moderated: true });
     expect((await me(CLEO).query("rooms.get", { roomId })).role).toBe("participant");
     expect((await me(CLEO).query("rooms.mine", {})).map((r) => r.title)).toEqual(["Town hall"]);
-    expect(await me(DEV).mutate("rooms.join", { code: "ZZZZZZ" })).toEqual({ status: "not_found" });
+    expect(await me(DEV).mutate("rooms.join", { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
   });
 
   it("hides rooms from outsiders", async () => {
@@ -67,11 +67,26 @@ describe.each([
   it("counts failed join guesses against the limit and recovers with time", async () => {
     const { code } = await room(false);
     for (let i = 0; i < 5; i++) {
-      expect(await me({ id: "p_guess", name: "Guesser" }).mutate("rooms.join", { code: "ZZZZZZ" })).toEqual({ status: "not_found" });
+      expect(await me({ id: "p_guess", name: "Guesser" }).mutate("rooms.join", { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
     }
     expect(await me({ id: "p_guess", name: "Guesser" }).mutate("rooms.join", { code })).toMatchObject({ status: "rate_limited" });
     vi.setSystemTime(new Date(START.getTime() + 13_000));
     expect(await me({ id: "p_guess", name: "Guesser" }).mutate("rooms.join", { code })).toMatchObject({ status: "joined" });
+  });
+
+  it("stops identity-rotating guessers with a global failure bucket, and valid joins do not spend it", async () => {
+    const { code } = await room(false);
+    for (let i = 0; i < 20; i++) {
+      for (let j = 0; j < 3; j++) {
+        expect(await me({ id: `p_g${i}`, name: "G" }).mutate("rooms.join", { code: "ZZZZZZZZ" })).toEqual({ status: "not_found" });
+      }
+    }
+    expect(await me({ id: "p_fresh", name: "Fresh" }).mutate("rooms.join", { code })).toMatchObject({ status: "rate_limited" });
+    vi.setSystemTime(new Date(START.getTime() + 3_000));
+    expect(await me({ id: "p_fresh", name: "Fresh" }).mutate("rooms.join", { code })).toMatchObject({ status: "joined" });
+    for (let i = 0; i < 80; i++) {
+      expect(await me({ id: `p_ok${i}`, name: "Ok" }).mutate("rooms.join", { code })).toMatchObject({ status: "joined" });
+    }
   });
 
   it("holds, shows and moderates questions according to role", async () => {
