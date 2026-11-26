@@ -14,7 +14,7 @@ Live Q&A and polling for events: join codes, realtime upvotes, live polls, a mod
 A Q&A tool looks simple until a room of 200 people uses it at once. The interesting parts:
 
 - **One vote per identity, transactionally.** `questions.setVote` is declarative (`voted: true|false`), not a toggle, so retries and double clicks are idempotent. The unique-row lookup and the denormalised counter update share one Convex transaction.
-- **Permissions that cannot be skipped.** Every function resolves the caller through one helper. Creating a room or joining by code only requires a signed-in identity; every other function also checks room membership and a role permission. Non-members get the same `NOT_FOUND` as a missing room, so ids cannot be probed.
+- **Permissions that cannot be skipped.** Every function resolves the caller through one helper. Creating a room or joining by code only requires a signed-in identity; every other function also checks room membership, and privileged operations (moderation, polls, spotlight, room settings, roles) additionally check a role permission. Non-members get the same `NOT_FOUND` as a missing room, so ids cannot be probed.
 - **Moderation as a state machine.** `pending, approved, answered, rejected` with an explicit transition table; the audience sees held questions only if they wrote them.
 - **Rate limits that survive failure.** Token buckets live in the database. Throwing mutations roll back their token (a refused duplicate costs nothing), but join-by-code returns a result instead of throwing so *failed guesses stay counted*.
 - **Offline demo that cannot reach production.** Demo mode swaps Clerk and Convex for personas and an in-memory backend. It fails the production build, is tree-shaken out of the bundle (checked by a script), and refuses to start at runtime when `PROD` is true.
@@ -46,7 +46,7 @@ npm install
 npm run dev:demo        # offline demo at http://localhost:5173, no keys
 ```
 
-Pick a persona; join code `EVENT7` is a seeded, moderated room. Switch persona from the header to see the participant, moderator and host views.
+Pick a persona; join code `KEYN-T4M7` is a seeded, moderated room. Switch persona from the header to see the participant, moderator and host views.
 
 Verification commands (all run for this README):
 
@@ -91,6 +91,16 @@ To run against real services see [docs/SETUP.md](docs/SETUP.md) (unverified chec
 - **Demo backend duplicates control flow**, not rules: shared pure modules plus a conformance suite keep the two honest. Mutations run on a snapshot and roll back on throw, mimicking transactions.
 - **Offline codegen.** `scripts/generate-convex-types.mjs` builds `convex/_generated` from templates shipped in the `convex` package so typecheck and CI need no deployment. CI fails if the output is stale.
 - **ESLint 9, not 10.** `eslint-plugin-jsx-a11y@6.10.2` does not declare support for ESLint 10, so `eslint` is pinned to `^9.39.5` to keep a clean `npm install` without `--legacy-peer-deps`.
+
+### Join codes and guessing
+
+A room is reachable by anyone who knows its code and is signed in, so the code is the secret.
+
+- **Format:** 8 symbols from a 31-symbol alphabet (no `I L O 0 1`), shown as `XXXX-XXXX`; input is forgiving about case, spaces and dashes. That is 31^8 = 852,891,037,441 codes, about **39.6 bits**.
+- **Generation:** `crypto.getRandomValues` with rejection sampling, so there is no modulo bias. Caveat: I could not verify what entropy source Convex's mutation runtime backs `getRandomValues` with (mutations must be deterministic, so it may be seeded per execution). The code assumes a CSPRNG; if you need that guaranteed, generate codes in an action and pass them in.
+- **Limits, in layers:** a per-user bucket (5 attempts, one more per 12 s) spent by every attempt; and a deployment-wide bucket (60 misses, refilling 1 per second) spent only by misses, which rotating accounts cannot reset. While that bucket is empty, joins are refused for everyone, valid codes included, so a hit cannot be told from a miss.
+- **What that buys, by arithmetic and not by measurement:** at the sustained ceiling of 1 miss per second an attacker gets about 86,400 guesses a day. With 1,000 rooms open at once the chance that a day of guessing hits any of them is roughly 86,400 x 1,000 / 852,891,037,441, about 0.01%.
+- **Trade-off:** a sustained flood of bad guesses can pause *new* joins for everyone (existing members are unaffected). I chose that over letting guessing continue. Rooms with moderation on still hold questions from anyone who does get in.
 
 ## Testing strategy
 

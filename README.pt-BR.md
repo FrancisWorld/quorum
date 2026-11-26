@@ -14,7 +14,7 @@ Perguntas e enquetes ao vivo para eventos: códigos de sala, upvotes em tempo re
 Um app de perguntas parece simples até 200 pessoas usarem ao mesmo tempo. As partes interessantes:
 
 - **Um voto por identidade, de forma transacional.** `questions.setVote` é declarativo (`voted: true|false`), não um toggle; repetições e cliques duplos são idempotentes. A checagem de unicidade e o contador desnormalizado ficam na mesma transação do Convex.
-- **Permissões que não dá para pular.** Toda função resolve o chamador por um único helper. Criar uma sala ou entrar por código exige apenas uma identidade autenticada; todas as outras funções também checam a participação na sala e a permissão do papel. Quem não é membro recebe o mesmo `NOT_FOUND` de uma sala inexistente.
+- **Permissões que não dá para pular.** Toda função resolve o chamador por um único helper. Criar uma sala ou entrar por código exige apenas uma identidade autenticada; todas as outras funções também checam a participação na sala, e as operações privilegiadas (moderação, enquetes, destaque, configurações da sala, papéis) checam ainda a permissão do papel. Quem não é membro recebe o mesmo `NOT_FOUND` de uma sala inexistente.
 - **Moderação como máquina de estados.** `pending, approved, answered, rejected` com tabela explícita de transições; o público só vê perguntas retidas se forem suas.
 - **Limites que sobrevivem a falhas.** Token buckets ficam no banco. Mutações que lançam erro devolvem o token (um duplicado recusado não custa nada), mas entrar por código retorna um resultado em vez de lançar, então *tentativas erradas continuam contadas*.
 - **Demo offline que não chega à produção.** O modo demo troca Clerk e Convex por personas e um backend em memória. Ele quebra o build de produção, é removido do bundle (verificado por script) e se recusa a iniciar em runtime quando `PROD` é verdadeiro.
@@ -44,7 +44,7 @@ npm install
 npm run dev:demo        # demo offline em http://localhost:5173, sem chaves
 ```
 
-Escolha uma persona; o código `EVENT7` é uma sala de exemplo com moderação. Troque de persona no cabeçalho para ver as visões de participante, moderador e anfitrião.
+Escolha uma persona; o código `KEYN-T4M7` é uma sala de exemplo com moderação. Troque de persona no cabeçalho para ver as visões de participante, moderador e anfitrião.
 
 Comandos de verificação (todos executados):
 
@@ -86,6 +86,16 @@ Para usar serviços reais veja [docs/SETUP.md](docs/SETUP.md) (roteiro não veri
 - **O backend demo duplica o fluxo, não as regras:** módulos puros compartilhados mais a suíte de conformidade.
 - **Codegen offline** por `scripts/generate-convex-types.mjs`; o CI falha se estiver desatualizado.
 - **ESLint 9, não 10:** `eslint-plugin-jsx-a11y@6.10.2` não declara suporte ao ESLint 10; por isso `eslint` fica em `^9.39.5`, evitando `--legacy-peer-deps`.
+
+### Códigos de sala e tentativas de adivinhação
+
+Quem souber o código de uma sala e estiver autenticado entra nela; o código é o segredo.
+
+- **Formato:** 8 símbolos de um alfabeto de 31 (sem `I L O 0 1`), exibidos como `XXXX-XXXX`; a entrada tolera maiúsculas, espaços e traços. São 31^8 = 852.891.037.441 códigos, cerca de **39,6 bits**.
+- **Geração:** `crypto.getRandomValues` com amostragem por rejeição, sem viés de módulo. Ressalva: não consegui verificar qual fonte de entropia o runtime de mutations do Convex usa para `getRandomValues` (mutations precisam ser determinísticas, então pode ser semeada por execução). O código assume um CSPRNG; se isso precisar ser garantido, gere os códigos em uma action e passe-os adiante.
+- **Limites, em camadas:** um bucket por usuário (5 tentativas, mais uma a cada 12 s) gasto por toda tentativa; e um bucket global (60 erros, reposição de 1 por segundo) gasto só por erros, que trocar de conta não reinicia. Com esse bucket vazio, entradas são recusadas para todos, inclusive com código válido, para que acerto e erro não se distingam.
+- **O que isso rende, por conta e não por medição:** no teto sustentado de 1 erro por segundo são cerca de 86.400 tentativas por dia. Com 1.000 salas abertas ao mesmo tempo, a chance de um dia inteiro de tentativas acertar alguma é de aproximadamente 86.400 x 1.000 / 852.891.037.441, cerca de 0,01%.
+- **Trade-off:** uma enxurrada contínua de palpites errados pode pausar *novas* entradas para todos (quem já é membro não é afetado). Escolhi isso em vez de deixar a adivinhação continuar.
 
 ## Estratégia de testes
 
