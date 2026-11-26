@@ -14,7 +14,7 @@ Live Q&A and polling for events: join codes, realtime upvotes, live polls, a mod
 A Q&A tool looks simple until a room of 200 people uses it at once. The interesting parts:
 
 - **One vote per identity, transactionally.** `questions.setVote` is declarative (`voted: true|false`), not a toggle, so retries and double clicks are idempotent. The unique-row lookup and the denormalised counter update share one Convex transaction.
-- **Permissions that cannot be skipped.** Every function resolves the caller through one helper, then checks room membership and a role permission. Non-members get the same `NOT_FOUND` as a missing room, so ids cannot be probed.
+- **Permissions that cannot be skipped.** Every function resolves the caller through one helper. Creating a room or joining by code only requires a signed-in identity; every other function also checks room membership and a role permission. Non-members get the same `NOT_FOUND` as a missing room, so ids cannot be probed.
 - **Moderation as a state machine.** `pending, approved, answered, rejected` with an explicit transition table; the audience sees held questions only if they wrote them.
 - **Rate limits that survive failure.** Token buckets live in the database. Throwing mutations roll back their token (a refused duplicate costs nothing), but join-by-code returns a result instead of throwing so *failed guesses stay counted*.
 - **Offline demo that cannot reach production.** Demo mode swaps Clerk and Convex for personas and an in-memory backend. It fails the production build, is tree-shaken out of the bundle (checked by a script), and refuses to start at runtime when `PROD` is true.

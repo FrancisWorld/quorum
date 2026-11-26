@@ -14,7 +14,7 @@ Perguntas e enquetes ao vivo para eventos: códigos de sala, upvotes em tempo re
 Um app de perguntas parece simples até 200 pessoas usarem ao mesmo tempo. As partes interessantes:
 
 - **Um voto por identidade, de forma transacional.** `questions.setVote` é declarativo (`voted: true|false`), não um toggle; repetições e cliques duplos são idempotentes. A checagem de unicidade e o contador desnormalizado ficam na mesma transação do Convex.
-- **Permissões que não dá para pular.** Toda função resolve o chamador por um único helper e depois checa a participação na sala e a permissão do papel. Quem não é membro recebe o mesmo `NOT_FOUND` de uma sala inexistente.
+- **Permissões que não dá para pular.** Toda função resolve o chamador por um único helper. Criar uma sala ou entrar por código exige apenas uma identidade autenticada; todas as outras funções também checam a participação na sala e a permissão do papel. Quem não é membro recebe o mesmo `NOT_FOUND` de uma sala inexistente.
 - **Moderação como máquina de estados.** `pending, approved, answered, rejected` com tabela explícita de transições; o público só vê perguntas retidas se forem suas.
 - **Limites que sobrevivem a falhas.** Token buckets ficam no banco. Mutações que lançam erro devolvem o token (um duplicado recusado não custa nada), mas entrar por código retorna um resultado em vez de lançar, então *tentativas erradas continuam contadas*.
 - **Demo offline que não chega à produção.** O modo demo troca Clerk e Convex por personas e um backend em memória. Ele quebra o build de produção, é removido do bundle (verificado por script) e se recusa a iniciar em runtime quando `PROD` é verdadeiro.
