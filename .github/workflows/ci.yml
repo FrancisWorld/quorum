@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generated Convex types are up to date
+        run: |
+          npm run codegen
+          git diff --exit-code convex/_generated
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - name: Production build (no keys needed)
+        run: npm run build
+      - name: Production bundle contains no demo code
+        run: npm run check:bundle
+      - name: Demo mode must fail a production build
+        run: |
+          if VITE_APP_MODE=demo npm run build; then
+            echo "demo mode build unexpectedly succeeded" >&2
+            exit 1
+          fi
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and probe it
+        run: |
+          docker build -t quorum:ci .
+          docker run -d --name quorum-ci -p 8080:8080 quorum:ci
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8080/healthz && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/ | grep -q "<title>Quorum</title>"
+          curl -fsS http://127.0.0.1:8080/r/some-room | grep -q "<title>Quorum</title>"
+          docker rm -f quorum-ci
